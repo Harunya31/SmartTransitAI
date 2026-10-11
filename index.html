@@ -1,0 +1,412 @@
+import streamlit as st
+
+# ==========================================
+# SMARTTRANSIT AI
+# Streamlit only - no SciPy or Scikit-learn
+# ==========================================
+
+st.set_page_config(
+    page_title="SmartTransit AI",
+    page_icon="🚌",
+    layout="wide"
+)
+
+# ==========================================
+# TITLE
+# ==========================================
+
+st.title("🚌 SmartTransit AI")
+st.subheader("Festival Crowd Prediction & Smart Bus Redistribution")
+
+st.info(
+    "This prototype estimates passenger demand and recommends "
+    "how to redistribute existing buses without adding new buses."
+)
+
+st.caption("Demonstration data only — not live transport data.")
+
+# ==========================================
+# SIDEBAR INPUTS
+# ==========================================
+
+st.sidebar.header("Festival Settings")
+
+visitors = st.sidebar.number_input(
+    "Expected Festival Visitors",
+    min_value=1000,
+    max_value=100000,
+    value=40000,
+    step=1000
+)
+
+hour = st.sidebar.slider(
+    "Prediction Hour",
+    min_value=0,
+    max_value=23,
+    value=18
+)
+
+weather = st.sidebar.selectbox(
+    "Weather",
+    ["Clear", "Rain", "Heavy Rain"]
+)
+
+total_buses = st.sidebar.number_input(
+    "Total Existing Buses",
+    min_value=1,
+    max_value=100,
+    value=16
+)
+
+bus_capacity = st.sidebar.number_input(
+    "Passenger Capacity per Bus",
+    min_value=10,
+    max_value=100,
+    value=50,
+    step=5
+)
+
+# ==========================================
+# LOCATIONS AND INITIAL BUS DISTRIBUTION
+# ==========================================
+
+locations = [
+    "Main Bus Stand",
+    "Temple East Stop",
+    "Railway Station",
+    "Town South Stop"
+]
+
+current_buses = [12, 2, 2, 0]
+
+# Example passenger counts at the reference scenario.
+base_demand = [16000, 12000, 7000, 5000]
+
+# ==========================================
+# RULE-BASED DEMAND ESTIMATION
+# ==========================================
+
+# Scale demand according to expected festival attendance.
+attendance_factor = visitors / 40000
+
+# Simple example time adjustment.
+if 6 <= hour < 10:
+    time_factor = 0.8
+elif 10 <= hour < 16:
+    time_factor = 0.9
+elif 16 <= hour < 21:
+    time_factor = 1.2
+else:
+    time_factor = 0.6
+
+# Simple example weather adjustment.
+if weather == "Rain":
+    weather_factor = 1.05
+elif weather == "Heavy Rain":
+    weather_factor = 1.10
+else:
+    weather_factor = 1.0
+
+predicted_demand = []
+
+for demand in base_demand:
+    estimate = (
+        demand
+        * attendance_factor
+        * time_factor
+        * weather_factor
+    )
+
+    predicted_demand.append(max(0, round(estimate)))
+
+# ==========================================
+# ALLOCATE EXISTING BUSES
+# ==========================================
+
+total_demand = sum(predicted_demand)
+
+if total_demand > 0:
+
+    exact_allocations = []
+
+    for demand in predicted_demand:
+        exact_allocations.append(
+            total_buses * demand / total_demand
+        )
+
+    # Start with the whole-number part of each allocation.
+    allocated_buses = [
+        int(value) for value in exact_allocations
+    ]
+
+    # Distribute remaining buses to the largest fractional parts.
+    remaining = total_buses - sum(allocated_buses)
+
+    fractions = [
+        exact_allocations[i] - allocated_buses[i]
+        for i in range(len(locations))
+    ]
+
+    order = sorted(
+        range(len(locations)),
+        key=lambda i: fractions[i],
+        reverse=True
+    )
+
+    for i in order[:remaining]:
+        allocated_buses[i] += 1
+
+else:
+    allocated_buses = [0] * len(locations)
+
+# ==========================================
+# DASHBOARD SUMMARY
+# ==========================================
+
+st.header("📊 Festival Overview")
+
+col1, col2, col3, col4 = st.columns(4)
+
+col1.metric("Expected Visitors", f"{visitors:,}")
+col2.metric("Existing Buses", total_buses)
+col3.metric("Prediction Time", f"{hour:02d}:00")
+col4.metric("Weather", weather)
+
+# ==========================================
+# DEMAND TABLE
+# ==========================================
+
+st.header("1. Passenger Demand Estimation")
+
+st.write(
+    "The following values are rule-based estimates calculated from "
+    "the reference demand, attendance, time, and weather settings."
+)
+
+st.markdown("| Location | Estimated Passengers |")
+st.markdown("|---|---:|")
+
+for i in range(len(locations)):
+    st.markdown(
+        f"| {locations[i]} | {predicted_demand[i]:,} |"
+    )
+
+# ==========================================
+# SIMPLE BAR CHART
+# ==========================================
+
+st.header("2. Passenger Demand Chart")
+
+chart_data = {
+    "Main Bus Stand": predicted_demand[0],
+    "Temple East Stop": predicted_demand[1],
+    "Railway Station": predicted_demand[2],
+    "Town South Stop": predicted_demand[3]
+}
+
+st.bar_chart(chart_data)
+
+# ==========================================
+# BUS ALLOCATION TABLE
+# ==========================================
+
+st.header("3. Recommended Bus Allocation")
+
+st.write(
+    "The system allocates the specified fleet in proportion to "
+    "estimated demand. This is a simple allocation baseline, not "
+    "an optimized transport schedule."
+)
+
+st.markdown(
+    "| Location | Current Buses | Recommended Buses | Change |"
+)
+
+st.markdown("|---|---:|---:|---:|")
+
+for i in range(len(locations)):
+
+    change = allocated_buses[i] - current_buses[i]
+
+    if change > 0:
+        change_text = f"+{change}"
+    else:
+        change_text = str(change)
+
+    st.markdown(
+        f"| {locations[i]} "
+        f"| {current_buses[i]} "
+        f"| {allocated_buses[i]} "
+        f"| {change_text} |"
+    )
+
+# ==========================================
+# FIXED-FLEET CONSTRAINT
+# ==========================================
+
+st.header("4. Fixed-Fleet Constraint Validation")
+
+allocated_total = sum(allocated_buses)
+
+col1, col2, col3 = st.columns(3)
+
+col1.metric("Existing Fleet", total_buses)
+col2.metric("Allocated Fleet", allocated_total)
+col3.metric("New Buses Added", 0)
+
+if allocated_total == total_buses:
+    st.success(
+        f"Constraint satisfied: all {total_buses} buses are allocated. "
+        "No additional buses have been added."
+    )
+else:
+    st.error("Fleet constraint violated. Please check the allocation.")
+
+# ==========================================
+# CAPACITY ANALYSIS
+# ==========================================
+
+st.header("5. Passenger Capacity Analysis")
+
+shortfall_total = 0
+
+for i in range(len(locations)):
+
+    capacity = allocated_buses[i] * bus_capacity
+
+    shortfall = max(
+        0,
+        predicted_demand[i] - capacity
+    )
+
+    shortfall_total += shortfall
+
+    with st.expander(locations[i]):
+
+        st.write(
+            f"Estimated passengers: {predicted_demand[i]:,}"
+        )
+
+        st.write(
+            f"Recommended buses: {allocated_buses[i]}"
+        )
+
+        st.write(
+            f"Estimated bus capacity: {capacity:,}"
+        )
+
+        if shortfall > 0:
+            st.warning(
+                f"Estimated unmet demand: {shortfall:,} passengers. "
+                "Review whether additional existing buses can be "
+                "reassigned safely."
+            )
+        else:
+            st.success(
+                "Estimated demand does not exceed the assigned capacity."
+            )
+
+st.metric(
+    "Total Estimated Passenger Shortfall",
+    f"{shortfall_total:,}"
+)
+
+# ==========================================
+# RECOMMENDATIONS
+# ==========================================
+
+st.header("6. Smart Recommendations")
+
+for i in range(len(locations)):
+
+    capacity = allocated_buses[i] * bus_capacity
+
+    if predicted_demand[i] > capacity:
+
+        st.warning(
+            f"**{locations[i]}:** Estimated demand exceeds the "
+            "capacity of its recommended allocation. Review whether "
+            "buses can be moved from another location."
+        )
+
+    else:
+
+        st.success(
+            f"**{locations[i]}:** The estimated demand fits within "
+            "the assigned bus capacity."
+        )
+
+st.info(
+    "Before moving buses, check demand at the source and destination, "
+    "travel time, routes, driver availability, and minimum service levels."
+)
+
+# ==========================================
+# SIMPLE EXPLANATION
+# ==========================================
+
+st.header("7. SmartTransit Assistant")
+
+question = st.text_input(
+    "Ask a question about the dashboard",
+    placeholder="Why do we redistribute buses?"
+)
+
+if st.button("Explain"):
+
+    if question.strip():
+
+        st.write(
+            "SmartTransit estimates passenger demand for each location "
+            "using simple rules. It allocates the existing fleet "
+            "proportionally to estimated demand and checks whether "
+            "assigned capacity is sufficient."
+        )
+
+        st.write(
+            "The allocation does not add buses. However, proportional "
+            "allocation alone does not guarantee a practical bus schedule. "
+            "Transport operators must also check routes, travel times, "
+            "and minimum service requirements."
+        )
+
+        st.caption(
+            "This explanation uses predefined text, not a live Generative AI model."
+        )
+
+    else:
+        st.warning("Please enter a question.")
+
+# ==========================================
+# DOWNLOAD RESULTS
+# ==========================================
+
+st.header("8. Download Results")
+
+csv_text = (
+    "Location,Estimated Passengers,Recommended Buses\n"
+)
+
+for i in range(len(locations)):
+    csv_text += (
+        f"{locations[i]},"
+        f"{predicted_demand[i]},"
+        f"{allocated_buses[i]}\n"
+    )
+
+st.download_button(
+    label="Download Allocation CSV",
+    data=csv_text,
+    file_name="smarttransit_results.csv",
+    mime="text/csv"
+)
+
+# ==========================================
+# FOOTER
+# ==========================================
+
+st.divider()
+
+st.caption(
+    "SmartTransit AI | Streamlit Prototype | Simulated Data"
+)
